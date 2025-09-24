@@ -141,29 +141,58 @@ def generate_simple_cv_pdf(data):
                 pdf.set_x(pdf.l_margin)
                 pdf.multi_cell(0, 7, f"- {item}", 0, 'L')
             pdf.ln(5)
-    return pdf.output()
+    # Return bytes suitable for writing to a BytesIO buffer.
+    # FPDF.output(dest='S') returns a string in PyFPDF; encode to latin-1 to preserve byte values.
+    pdf_str = pdf.output(dest='S')
+    try:
+        pdf_bytes = pdf_str.encode('latin-1')
+    except Exception:
+        # Fallback to utf-8 if latin-1 fails for some reason
+        pdf_bytes = pdf_str.encode('utf-8')
+    return pdf_bytes
 
 @app.route('/api/generate-cv', methods=['POST'])
 def generate_cv_endpoint():
-    if 'jsonData' not in request.form:
-        return jsonify({"message": "Missing form data."}), 400
+    try:
+        if 'jsonData' not in request.form:
+            return jsonify({"message": "Missing form data."}), 400
 
-    cv_data = json.loads(request.form['jsonData'])
-    certificate_file = request.files.get('certificate')
+        cv_data = json.loads(request.form['jsonData'])
+        certificate_file = request.files.get('certificate')
 
-    is_verified, reason = verify_certificate_with_groq(certificate_file)
+        is_verified, reason = verify_certificate_with_groq(certificate_file)
 
-    if not is_verified:
-        return jsonify({"message": f"Certificate Verification Failed: {reason}"}), 400
+        if not is_verified:
+            return jsonify({"message": f"Certificate Verification Failed: {reason}"}), 400
 
-    pdf_bytes = generate_simple_cv_pdf(cv_data)
-    
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f"{cv_data.get('fullName', 'resume').replace(' ', '_')}_CV.pdf"
-    )
+        pdf_bytes = generate_simple_cv_pdf(cv_data)
+
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=f"{cv_data.get('fullName', 'resume').replace(' ', '_')}_CV.pdf"
+        )
+    except Exception as e:
+        # Catch-all: return JSON instead of letting Flask show an HTML error page.
+        import traceback
+        tb = traceback.format_exc()
+        print(f"Unhandled exception in generate_cv_endpoint: {e}\n{tb}")
+        return jsonify({"message": "Internal server error in generate-cv endpoint.", "details": str(e), "traceback": tb}), 500
+
+
+# Global handler to ensure any uncaught exceptions are returned as JSON
+@app.errorhandler(Exception)
+def handle_all_exceptions(e):
+    try:
+        # If it's an HTTPException, it has a code and description
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return jsonify({"message": e.description}), e.code
+    except Exception:
+        pass
+    print(f"Unhandled exception: {e}")
+    return jsonify({"message": "An internal server error occurred.", "details": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
