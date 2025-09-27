@@ -53,13 +53,36 @@ app.post('/api/generate-cv', upload.single('certificate'), async (req, res) => {
         res.send(flaskResponse.data);
 
     } catch (error) {
-        // If Flask returns an error (like verification failed), forward it
+        // If Flask returns an error (like verification failed), try to forward a JSON error.
         if (error.response && error.response.data) {
-            // The error data is a buffer, so we convert it to a string
-            const errorJson = JSON.parse(error.response.data.toString());
-            console.error('Error from Flask service:', errorJson.message);
-            return res.status(400).json(errorJson);
+            // The upstream may return JSON or HTML/text. Normalize to a string first.
+            let dataString;
+            try {
+                if (Buffer.isBuffer(error.response.data)) {
+                    dataString = error.response.data.toString('utf8');
+                } else if (error.response.data instanceof ArrayBuffer) {
+                    dataString = Buffer.from(error.response.data).toString('utf8');
+                } else if (typeof error.response.data === 'string') {
+                    dataString = error.response.data;
+                } else {
+                    dataString = JSON.stringify(error.response.data);
+                }
+            } catch (e) {
+                dataString = String(error.response.data);
+            }
+
+            // Try to parse JSON; if that fails, send a safe JSON message instead of raw HTML.
+            try {
+                const errorJson = JSON.parse(dataString);
+                console.error('Error from Flask service:', errorJson.message || errorJson);
+                return res.status(error.response.status || 400).json(errorJson);
+            } catch (e) {
+                console.error('Non-JSON error from Flask service. Returning sanitized JSON to client.');
+                console.error(dataString.slice ? dataString.slice(0, 1000) : dataString);
+                return res.status(error.response.status || 502).json({ message: 'Upstream service error', details: dataString });
+            }
         }
+
         console.error('Internal error in Node.js gateway:', error.message);
         res.status(500).json({ message: 'An internal error occurred.' });
     }
