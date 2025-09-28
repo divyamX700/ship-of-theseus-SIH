@@ -130,7 +130,7 @@ export default function CVGeneratePage() {
 
   return (
     <div className="App p-6">
-      <h1 className="text-2xl font-bold mb-4">
+      <h1 className="text-2xl font-bold mb-4 bg-red-100 p-4 rounded">
         Simple CV Builder with Verification
       </h1>
       <form onSubmit={handleSubmit} className="space-y-6">
