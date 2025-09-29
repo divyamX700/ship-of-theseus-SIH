@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Search, Bell, User, MapPin, Building, Star, X, Upload } from 'lucide-react';
+import { DM_Sans } from "next/font/google";
 
 interface Internship {
   id: string;
@@ -12,9 +13,16 @@ interface Internship {
   description: string;
   skills: string[];
   match: number;
+  skill_scores?: Record<string, number>;
   category: string;
   logo?: string;
 }
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+});
+
 
 const InternshipPortal = () => {
   const [appliedCount] = useState(1);
@@ -23,10 +31,160 @@ const InternshipPortal = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isApplicationModalOpen, setIsApplicationModalOpen] = useState(false);
   const [applicationNote, setApplicationNote] = useState('');
+  const [states, setStates] = useState([]);
+  const [districts, setDistricts] = useState([]);
+  const [industries, setIndustries] = useState([]);
+  const [fields, setFields] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [selectedState, setSelectedState] = useState("");
+  const [selectedDistrict, setSelectedDistrict] = useState("");
+  const [selectedIndustry, setSelectedIndustry] = useState("");
+  const [selectedField, setSelectedField] = useState("");
+  const [selectedCompany, setSelectedCompany] = useState("");
+  const [filtersActive, setFiltersActive] = useState(false);
 
-  const openModal = (internship: Internship) => {
-    setSelectedInternship(internship);
-    setIsModalOpen(true);
+  useEffect(() => {
+    fetch("http://localhost:8080/api/filters/states")
+      .then((res) => res.json())
+      .then(setStates);
+
+    fetch("http://localhost:8080/api/filters/industries")
+      .then((res) => res.json())
+      .then(setIndustries);
+
+    fetch("http://localhost:8080/api/filters/fields")
+      .then((res) => res.json())
+      .then(setFields);
+
+    fetch("http://localhost:8080/api/filters/companies")
+      .then((res) => res.json())
+      .then(setCompanies);
+  }, []);
+   useEffect(() => {
+    if (selectedState) {
+      fetch(`http://localhost:8080/api/filters/districts/${selectedState}`)
+        .then((res) => res.json())
+        .then(setDistricts);
+    } else {
+      setDistricts([]);
+      setSelectedDistrict("");
+    }
+  }, [selectedState]);
+
+  const handleReset = () => {
+    setSelectedState("");
+    setSelectedDistrict("");
+    setSelectedIndustry("");
+    setSelectedField("");
+    setSelectedCompany("");
+    setFiltersActive(false);
+    setInternships([]);
+    setPage(1);
+  };
+
+  const [internships, setInternships] = useState<Internship[]>([]); 
+
+const handleApply = async () => {
+  try {
+    const queryParams = new URLSearchParams();
+
+    // Add filters only if a value is selected
+    if (selectedState) queryParams.append("state", selectedState);
+    if (selectedDistrict) queryParams.append("district", selectedDistrict);
+    if (selectedIndustry) queryParams.append("industry", selectedIndustry);
+    if (selectedField) queryParams.append("field", selectedField);
+    if (selectedCompany) queryParams.append("company", selectedCompany);
+
+    // Candidate skills: try to read the user's CV skills from localStorage first
+    let skills: string[] = [];
+    try {
+      if (typeof window !== 'undefined') {
+        const stored = localStorage.getItem('resume_skills');
+        if (stored) skills = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.warn('Error reading resume_skills from localStorage', e);
+    }
+    if (!skills || skills.length === 0) {
+      skills = ['CCTV Systems', 'Computer Networks', 'Hardware', 'Surveillance', 'Alertness', 'Observation', 'Reliability'];
+    }
+
+    if (skills && skills.length > 0) {
+      queryParams.append("skills", skills.join(","));
+    }
+
+    const base = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8080";
+    const url = `${base}/api/internships?page=1&limit=10&${queryParams.toString()}`;
+
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+    const result = await response.json();
+
+    // Map incoming internships to our UI shape
+    const mapped: Internship[] = (result.data || []).map((d: any) => ({
+      id: d._id || d.InternshipID || String(d._id),
+      title: d.InternshipTitle || d.title || "Untitled",
+      company: d.CompanyName || d.company || "Unknown",
+      location: `${d.InternshipDistrict || ""}${d.InternshipDistrict || d.InternshipState ? ', ' : ''}${d.InternshipState || ""}`,
+      type: 'On-site',
+      description: d.JobDescription || d.description || "",
+      skills: Array.isArray(d.ext_skills) ? d.ext_skills.slice(0, 5) : ((d.PreferredSkills && typeof d.PreferredSkills === 'string') ? d.PreferredSkills.split(/[;,]\s*/).slice(0,5) : (d.skills || []).slice(0,5)),
+      match: d.match ?? 0,
+      skill_scores: d.skill_scores || {},
+      category: d.Sector || d.category || "General",
+      logo: "🏢"
+    }));
+
+   
+    setInternships(mapped);
+    setPage(1);
+    setHasMore((result.total || 0) > mapped.length);
+    setFiltersActive(true);
+  } catch (err) {
+    console.error("Error fetching internships:", err);
+  }
+};
+
+
+
+  const openModal = async (internship: Internship) => {
+    // fetch dynamic details for this internship, including per-skill matches
+    try {
+      const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+      // prefer resume skills from localStorage if available
+      let skills: string[] = [];
+      try { const stored = localStorage.getItem('resume_skills'); if (stored) skills = JSON.parse(stored); } catch {}
+
+      const q = skills.length ? `?skills=${encodeURIComponent(skills.join(','))}` : '';
+      const res = await fetch(`${base}/api/internships/${internship.id}${q}`);
+      if (res.ok) {
+        const data = await res.json();
+        // normalize to our Internship shape
+        const mapped: Internship = {
+          id: data._id || data.InternshipID || internship.id,
+          title: data.InternshipTitle || data.title || internship.title,
+          company: data.CompanyName || data.company || internship.company,
+          location: `${data.InternshipDistrict || ''}${data.InternshipDistrict || data.InternshipState ? ', ' : ''}${data.InternshipState || ''}`,
+          type: 'On-site',
+          description: data.JobDescription || data.description || internship.description,
+          skills: Array.isArray(data.ext_skills) ? data.ext_skills : (data.PreferredSkills ? (typeof data.PreferredSkills === 'string' ? data.PreferredSkills.split(/[;,]\s*/) : data.PreferredSkills) : (data.skills || internship.skills)),
+          match: data.match ?? internship.match ?? 0,
+          skill_scores: data.skill_scores || internship.skill_scores || {},
+          category: data.Sector || data.category || internship.category,
+          logo: internship.logo || '🏢'
+        };
+        setSelectedInternship(mapped);
+        setIsModalOpen(true);
+      } else {
+        // fallback: show the passed-in object
+        setSelectedInternship(internship);
+        setIsModalOpen(true);
+      }
+    } catch (e) {
+      console.error('Error fetching internship details:', e);
+      setSelectedInternship(internship);
+      setIsModalOpen(true);
+    }
   };
 
   const closeModal = () => {
@@ -52,7 +210,7 @@ const InternshipPortal = () => {
     closeApplicationModal();
   };
   // dynamic internships state
-  const [internships, setInternships] = useState<Internship[]>([]);
+ // const [internships, setInternships] = useState<Internship[]>([]);
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
   const [loading, setLoading] = useState(false);
@@ -60,13 +218,16 @@ const InternshipPortal = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Don't run paginated fetch when a filtered result is active
+    if (filtersActive) return;
+
     let mounted = true;
     const fetchPage = async (p: number) => {
       setLoading(true);
       setError(null);
       try {
-  const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
-  const res = await fetch(`${base}/api/internships?page=${p}&limit=${limit}`);
+        const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8080';
+        const res = await fetch(`${base}/api/internships?page=${p}&limit=${limit}`);
         if (!res.ok) throw new Error(`Server returned ${res.status}`);
         const body = await res.json();
         const mapped: Internship[] = (body.data || []).map((d: any) => ({
@@ -96,10 +257,10 @@ const InternshipPortal = () => {
     fetchPage(page);
     return () => { mounted = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, filtersActive]);
 
   const InternshipCard = ({ internship, isTopInternship = false }: { internship: Internship; isTopInternship?: boolean }) => (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 hover:shadow-md transition-shadow">
+    <div className={`bg-white border border-gray-200 rounded-lg p-4 mb-4 hover:shadow-md transition-shadow ${dmSans.className}`}>
       <div className="flex items-start justify-between">
         <div className="flex items-start space-x-3 flex-1">
           <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center text-lg">
@@ -188,61 +349,117 @@ const InternshipPortal = () => {
                   <User className="w-6 h-6 text-gray-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold">Rajesh Kumar</h3>
-                  <p className="text-sm text-gray-600">rajesh.k@gmail.com</p>
+                  <h3 className="font-semibold">Admin</h3>
+                  <p className="text-sm text-gray-600">admin@gmail.com</p>
                   <button className="text-sm text-blue-600 hover:underline">Profile</button>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-lg p-4">
-              <h3 className="font-semibold mb-4">Filters</h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Location</label>
-                  <div className="mt-2 space-y-2">
-                    <div className="flex space-x-4">
-                      <div>
-                        <label className="text-sm text-gray-600">State</label>
-                        <select className="mt-1 block w-full text-sm border border-gray-300 rounded">
-                          <option>Select</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-sm text-gray-600">District</label>
-                        <select className="mt-1 block w-full text-sm border border-gray-300 rounded">
-                          <option>Select</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Industry</label>
-                  <select className="mt-2 block w-full text-sm border border-gray-300 rounded">
-                    <option>Select industry</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Field</label>
-                  <select className="mt-2 block w-full text-sm border border-gray-300 rounded">
-                    <option>Select field</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700">Company</label>
-                  <select className="mt-2 block w-full text-sm border border-gray-300 rounded">
-                    <option>Select company</option>
-                  </select>
-                </div>
-                <div className="flex space-x-2 pt-4">
-                  <button className="text-sm text-gray-600 hover:text-gray-800">Reset</button>
-                  <button className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700">
-                    Apply
-                  </button>
-                </div>
+           <div className="bg-white rounded-lg p-4">
+      <h3 className="font-semibold mb-4">Filters</h3>
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium text-gray-700">Location</label>
+          <div className="mt-2 space-y-2">
+            <div className="flex space-x-4">
+              <div>
+                <label className="text-sm text-gray-600">State</label>
+                <select
+                  className="mt-1 block w-full text-sm border border-gray-300 rounded"
+                  value={selectedState}
+                  onChange={(e) => setSelectedState(e.target.value)}
+                >
+                  <option value="">All states</option>
+                  {states.map((s, i) => (
+                    <option key={i} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">District</label>
+                <select
+                  className="mt-1 block w-full text-sm border border-gray-300 rounded"
+                  value={selectedDistrict}
+                  onChange={(e) => setSelectedDistrict(e.target.value)}
+                  disabled={!selectedState}
+                >
+                  <option value="">All districts</option>
+                  {districts.map((d, i) => (
+                    <option key={i} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
+          </div>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Industry</label>
+          <select
+            className="mt-2 block w-full text-sm border border-gray-300 rounded"
+            value={selectedIndustry}
+            onChange={(e) => setSelectedIndustry(e.target.value)}
+          >
+            <option value="">All industries</option>
+            {industries.map((ind, i) => (
+              <option key={i} value={ind}>
+                {ind}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Field</label>
+          <select
+            className="mt-2 block w-full text-sm border border-gray-300 rounded"
+            value={selectedField}
+            onChange={(e) => setSelectedField(e.target.value)}
+          >
+            <option value="">All fields</option>
+            {fields.map((f, i) => (
+              <option key={i} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700">Company</label>
+          <select
+            className="mt-2 block w-full text-sm border border-gray-300 rounded"
+            value={selectedCompany}
+            onChange={(e) => setSelectedCompany(e.target.value)}
+          >
+            <option value="">All companies</option>
+            {companies.map((c, i) => (
+              <option key={i} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex space-x-2 pt-4">
+          <button
+            className="text-sm text-gray-600 hover:text-gray-800"
+            onClick={handleReset}
+          >
+            Reset
+          </button>
+          <button
+            className="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700"
+            onClick={handleApply}
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+
+
           </div>
 
           {/* Main Content */}
@@ -302,7 +519,7 @@ const InternshipPortal = () => {
                 </div>
               </div>
               <div className="space-y-4">
-                {internships.slice(0, 3).map((internship) => (
+                {internships.slice(0, 5).map((internship) => (
                   <InternshipCard key={internship.id} internship={internship} isTopInternship={true} />
                 ))}
                 {internships.length === 0 && !loading && (
@@ -383,7 +600,8 @@ const InternshipPortal = () => {
 
       {/* Modal */}
       {isModalOpen && selectedInternship && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+         <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-sm bg-black/10">
+
           <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900">
@@ -402,9 +620,7 @@ const InternshipPortal = () => {
               <div className="mb-6">
                 <h3 className="font-semibold text-gray-900 mb-3">Job Description</h3>
                 <p className="text-gray-700 leading-relaxed">
-                  As a {selectedInternship.title} at {selectedInternship.company}, you will contribute to building performant, accessible user 
-                  interfaces. You will collaborate with design and product to ship features, write clean, maintainable code, 
-                  and help improve developer tooling and documentation.
+                  {selectedInternship.description || `As a ${selectedInternship.title} at ${selectedInternship.company}, you will be responsible for contributing to various projects and gaining hands-on experience in the field.`}
                 </p>
               </div>
 
@@ -414,82 +630,87 @@ const InternshipPortal = () => {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="bg-gray-50 p-3 rounded">
                     <span className="text-sm text-gray-600">Internship ID:</span>
-                    <div className="font-medium">INT-{selectedInternship.category.toUpperCase()}-{selectedInternship.id}841</div>
+                    <div className="font-medium">{selectedInternship.id}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded">
                     <span className="text-sm text-gray-600">Field:</span>
                     <div className="font-medium">{selectedInternship.category}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Sector:</span>
-                    <div className="font-medium">Technology</div>
+                    <span className="text-sm text-gray-600">Company:</span>
+                    <div className="font-medium">{selectedInternship.company}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded">
                     <span className="text-sm text-gray-600">Location:</span>
                     <div className="font-medium">{selectedInternship.location}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Candidates Applied:</span>
-                    <div className="font-medium">{Math.floor(Math.random() * 200) + 50}</div>
+                    <span className="text-sm text-gray-600">Type:</span>
+                    <div className="font-medium">{selectedInternship.type}</div>
                   </div>
                   <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Total Opportunities:</span>
-                    <div className="font-medium">{Math.floor(Math.random() * 500) + 100}</div>
+                    <span className="text-sm text-gray-600">Match Score:</span>
+                    <div className="font-medium text-green-600">{selectedInternship.match}%</div>
                   </div>
                 </div>
               </div>
 
-              {/* Location Details */}
+              {/* Skills with Color Coding */}
               <div className="mb-6">
-                <h3 className="font-semibold text-gray-900 mb-3">Location Details</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Mode:</span>
-                    <div className="font-medium">
-                      {selectedInternship.type === 'Remote' ? 'Remote-first, optional office visits' : 'On-site with flexible hours'}
-                    </div>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Time zone overlap:</span>
-                    <div className="font-medium">4 hrs with PST</div>
-                  </div>
+                <h3 className="font-semibold text-gray-900 mb-3">Required Skills</h3>
+                <div className="mb-2 text-sm text-gray-600">
+                  <span className="inline-block w-3 h-3 bg-green-500 rounded-full mr-1"></span>
+                  Matched Skills
+                  <span className="inline-block w-3 h-3 bg-red-500 rounded-full ml-4 mr-1"></span>
+                  Skills Gap
                 </div>
-              </div>
-
-              {/* Skills */}
-              <div className="mb-6">
-                <h3 className="font-semibold text-gray-900 mb-3">Skills</h3>
                 <div className="flex flex-wrap gap-2">
-                  {selectedInternship.skills.map((skill, index) => (
-                    <span key={index} className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
-                      {skill}
-                    </span>
-                  ))}
-                  <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">Performance</span>
-                  <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">Testing</span>
-                </div>
-              </div>
+                  {
+                    // build a normalized map from skill name -> numeric flag (0/1)
+                    (() => {
+                      const raw = selectedInternship.skill_scores || {};
+                      const normMap: Record<string, number> = {};
+                      Object.keys(raw).forEach(k => {
+                        try {
+                          const val = raw[k];
+                          const n = (typeof val === 'string') ? Number(val) : (typeof val === 'boolean' ? (val ? 1 : 0) : Number(val));
+                          normMap[String(k).trim().toLowerCase()] = Number.isFinite(n) ? n : 0;
+                        } catch { /* ignore */ }
+                      });
 
-              {/* Qualifications Required */}
-              <div className="mb-6">
-                <h3 className="font-semibold text-gray-900 mb-3">Qualifications Required</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Minimum Qualification:</span>
-                    <div className="font-medium">Bachelor's (ongoing) or higher</div>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Course:</span>
-                    <div className="font-medium">B.Tech / B.Sc / M.Sc in CS or related</div>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Specialization:</span>
-                    <div className="font-medium">Web Technologies / HCI</div>
-                  </div>
-                  <div className="bg-gray-50 p-3 rounded">
-                    <span className="text-sm text-gray-600">Certifications:</span>
-                    <div className="font-medium">Any React/TS certification preferred</div>
-                  </div>
+                      const nodes = selectedInternship.skills.map((skill, index) => {
+                        const key = String(skill).trim().toLowerCase();
+                        const isMatched = normMap[key] === 1;
+                        return (
+                          <span
+                            key={index}
+                            className={`px-3 py-1 rounded-full text-sm font-medium ${isMatched ? 'bg-green-100 text-green-800 border border-green-300' : 'bg-red-100 text-red-800 border border-red-300'}`}
+                          >
+                            {skill}
+                          </span>
+                        );
+                      });
+
+                      return nodes;
+                    })()
+                  }
+                </div>
+                <div className="mt-3 text-sm text-gray-600">
+                  {
+                    (() => {
+                      const raw = selectedInternship.skill_scores || {};
+                      const normMap: Record<string, number> = {};
+                      Object.keys(raw).forEach(k => {
+                        try {
+                          const val = raw[k];
+                          const n = (typeof val === 'string') ? Number(val) : (typeof val === 'boolean' ? (val ? 1 : 0) : Number(val));
+                          normMap[String(k).trim().toLowerCase()] = Number.isFinite(n) ? n : 0;
+                        } catch { /* ignore */ }
+                      });
+                      const matched = selectedInternship.skills.reduce((acc, s) => acc + (normMap[String(s).trim().toLowerCase()] === 1 ? 1 : 0), 0);
+                      return `${matched} of ${selectedInternship.skills.length} skills matched`;
+                    })()
+                  }
                 </div>
               </div>
 
@@ -510,7 +731,8 @@ const InternshipPortal = () => {
 
       {/* Application Modal */}
       {isApplicationModalOpen && selectedInternship && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 flex items-center justify-center z-50 p-4 backdrop-blur-sm bg-black/10">
+
           <div className="bg-white rounded-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900">
@@ -553,42 +775,39 @@ const InternshipPortal = () => {
 
               {/* Skills Match */}
               <div className="mb-8">
-                <h3 className="font-semibold text-gray-900 mb-4">Skills Match</h3>
+                <h3 className="font-semibold text-gray-900 mb-4">Skills Match Analysis</h3>
                 <div className="grid grid-cols-2 gap-6">
                   <div>
-                    <h4 className="text-sm font-medium text-gray-700 mb-3">Overlapping Skills</h4>
+                    <h4 className="text-sm font-medium text-gray-700 mb-3">
+                      ✓ Matched Skills ({Object.values(selectedInternship.skill_scores || {}).filter(v => v === 1).length})
+                    </h4>
                     <div className="flex flex-wrap gap-2">
-                      {selectedInternship.skills.slice(0, 2).map((skill, index) => (
-                        <span key={index} className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
-                          {skill}
-                        </span>
-                      ))}
-                      <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
-                        User Research
-                      </span>
-                      <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
-                        Wireframing
-                      </span>
+                      {selectedInternship.skills
+                        .filter(skill => selectedInternship.skill_scores?.[skill] === 1)
+                        .map((skill, index) => (
+                          <span key={index} className="bg-green-100 text-green-800 border border-green-300 px-3 py-1 rounded-full text-sm font-medium">
+                            {skill}
+                          </span>
+                        ))}
+                      {Object.values(selectedInternship.skill_scores || {}).filter(v => v === 1).length === 0 && (
+                        <span className="text-sm text-gray-500">No matched skills</span>
+                      )}
                     </div>
                   </div>
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-700 mb-3">Additional Skills Needed</h4>
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {selectedInternship.skills.slice(2).map((skill, index) => (
-                        <span key={index} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
-                          {skill}
-                        </span>
-                      ))}
-                      <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
-                        TypeScript
-                      </span>
-                      <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
-                        Design Systems
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500">
-                      Helpful but not mandatory. Highlight any exposure below.
-                    </p>
+                  {/* Skills gap column removed as requested */}
+                </div>
+                
+                {/* Match Percentage */}
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">Overall Match Score:</span>
+                    <span className="text-2xl font-bold text-blue-600">{selectedInternship.match}%</span>
+                  </div>
+                  <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                      style={{ width: `${selectedInternship.match}%` }}
+                    ></div>
                   </div>
                 </div>
               </div>
@@ -599,7 +818,7 @@ const InternshipPortal = () => {
                 <textarea
                   value={applicationNote}
                   onChange={(e) => setApplicationNote(e.target.value)}
-                  placeholder="Add a short note to the recruiter (availability, project links, visa, etc.)"
+                  placeholder="Add a short note to the recruiter (availability, project links, relevant experience with gap skills, etc.)"
                   className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>

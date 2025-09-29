@@ -26,14 +26,15 @@ const internshipSchema = new mongoose.Schema({
   MinimumQualification: String,
   Course: String,
   Specialization: String,
-  PreferredSkills: String
+  PreferredSkills: String,
+  ext_skills: [String]
 });
 
 const Internship = mongoose.model('Internship', internshipSchema);
 // Read CSV and insert into DB
 const results = [];
 
-fs.createReadStream("Job_Descriptions.csv.xls") // make sure students.csv is in the same folder
+fs.createReadStream("Job_Descriptions.csv.xls") 
   .pipe(csv())
   .on("data", (data) => results.push(data))
   .on("end", () => {

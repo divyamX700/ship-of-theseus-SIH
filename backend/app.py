@@ -158,6 +158,44 @@ def generate_cv_endpoint():
             return jsonify({"message": "Missing form data."}), 400
 
         cv_data = json.loads(request.form['jsonData'])
+        # Normalize frontend shape (nested) into the flat shape expected by generator
+        def normalize_cv(in_data):
+            out = {}
+            # name/email/phone/location
+            if isinstance(in_data, dict) and 'personalDetails' in in_data:
+                pd = in_data.get('personalDetails', {})
+                out['fullName'] = pd.get('name') or in_data.get('fullName')
+                out['email'] = pd.get('email') or in_data.get('email')
+                out['phone'] = pd.get('phone') or in_data.get('phone')
+                out['cityState'] = pd.get('location') or in_data.get('cityState') or pd.get('location')
+            else:
+                out['fullName'] = in_data.get('fullName')
+                out['email'] = in_data.get('email')
+                out['phone'] = in_data.get('phone')
+                out['cityState'] = in_data.get('cityState')
+
+            # education: map degree -> specialization, keep grade
+            educ = []
+            raw_educ = in_data.get('education') or []
+            for item in raw_educ:
+                if not isinstance(item, dict):
+                    continue
+                spec = item.get('specialization') or item.get('degree') or item.get('qualification') or ''
+                grade = item.get('grade') or item.get('score') or ''
+                educ.append({'specialization': spec, 'grade': grade})
+            out['education'] = educ
+
+            # experience
+            out['experience'] = in_data.get('experience') or []
+
+            # skills, languages, certifications
+            out['skills'] = in_data.get('skills') or []
+            out['languages'] = in_data.get('languages') or []
+            out['certifications'] = in_data.get('certifications') or []
+
+            return out
+
+        cv_data = normalize_cv(cv_data)
         certificate_file = request.files.get('certificate')
 
         is_verified, reason = verify_certificate_with_groq(certificate_file)
