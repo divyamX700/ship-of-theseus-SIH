@@ -219,10 +219,23 @@ app.get('/api/internships', async (req, res) => {
     // --- merge scores back into internships ---
     const scoredData = allData.map(d => {
       const scoreEntry = scores.find(s => s.jd_id === d._id.toString());
+      let match = 0;
+      let skill_scores = {};
+      if (scoreEntry) {
+        const s = Number(scoreEntry.score) || 0;
+        if (s <= 2) {
+          match = Math.round(s * 100);
+        } else {
+          match = Math.round(s);
+        }
+        if (match >= 100) match = 96;
+        skill_scores = scoreEntry.skill_scores || {};
+      }
+
       return {
         ...d,
-        match: scoreEntry ? Math.round(scoreEntry.score * 100) : 0, // Default to 0 instead of null
-        skill_scores: scoreEntry ? scoreEntry.skill_scores : {}
+        match,
+        skill_scores
       };
     });
 
@@ -278,7 +291,19 @@ app.get('/api/internships/:id', async (req, res) => {
     let skill_scores = {};
     if (scoreEntry) {
       const s = Number(scoreEntry.score) || 0;
-      match = s > 1 ? Math.round(s) : Math.round(s * 100);
+
+      // If the recommender returns a small fractional score (e.g. ~0.0 - ~2.0)
+      // we treat values <= 2 as normalized (0..~2) and multiply by 100.
+      // If it returns a larger value (>2) assume it's already on a 0..100 scale.
+      if (s <= 2) {
+        match = Math.round(s * 100);
+      } else {
+        match = Math.round(s);
+      }
+
+      // Enforce cap: any computed match >= 100 should be reduced to 96
+      if (match >= 100) match = 96;
+
       skill_scores = scoreEntry.skill_scores || {};
     }
 

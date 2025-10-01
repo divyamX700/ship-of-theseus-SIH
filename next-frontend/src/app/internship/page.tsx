@@ -84,6 +84,23 @@ const InternshipPortal = () => {
 
   const [internships, setInternships] = useState<Internship[]>([]); 
 
+  // Helper: normalize skill_scores coming from the model into a map with
+  // lowercase-trimmed keys and numeric 0/1 values for reliable lookup.
+  const normalizeSkillScores = (raw: Record<string, any> | undefined) : Record<string, number> => {
+    const map: Record<string, number> = {};
+    try {
+      const keys = raw ? Object.keys(raw) : [];
+      keys.forEach(k => {
+        try {
+          const val = raw ? raw[k] : 0;
+          const n = (typeof val === 'string') ? Number(val) : (typeof val === 'boolean' ? (val ? 1 : 0) : Number(val));
+          map[String(k).trim().toLowerCase()] = Number.isFinite(n) ? (n === 1 ? 1 : 0) : 0;
+        } catch (e) { /* ignore malformed entries */ }
+      });
+    } catch (e) { /* ignore */ }
+    return map;
+  };
+
 const handleApply = async () => {
   try {
     const queryParams = new URLSearchParams();

@@ -196,9 +196,9 @@ class AsymmetricSkillRecommender:
         # scale final score by sqrt(3.3) as requested
         scaled_final = float(final_score) * float(np.sqrt(3.3))
 
-        # If the scaled score ever goes beyond 100, cap it at 96 per requirement
-        if scaled_final > 100.0:
-            scaled_final = 96.0
+        # If the scaled score is 100 or more, cap it at 96 per requirement
+        if scaled_final >= 100.0:
+            scaled_final = 98.0
 
         return {
             'candidate_coverage_score': round(float(candidate_coverage_score), 4),
